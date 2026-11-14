@@ -27,5 +27,6 @@ jobs:
         env:
           TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
           TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TARGET_PHONES: '918999771788, 919021753459'
         run: |
           python daily_job_hunter.py

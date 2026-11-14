@@ -1,6 +1,7 @@
 """
 Daily Job Hunter & WhatsApp Notification Automation for Rohan Tingare
 Searches for QA Automation / Selenium roles in Pune and sends a curated digest to WhatsApp via Twilio.
+Supports multiple recipient WhatsApp numbers simultaneously!
 """
 
 import os
@@ -11,17 +12,17 @@ from jobspy import scrape_jobs
 
 # Candidate Configuration
 CANDIDATE_NAME = "Rohan Tingare"
-# Default to the number verified in your Twilio Sandbox (+91 8999771788)
-# If you also want alerts on +91 9021753459, send 'join century-nails' to +1 415 523 8886 from that phone.
-TARGET_PHONE = os.getenv("TARGET_PHONE", "918999771788")
 SEARCH_TERM = "QA Automation Engineer OR Selenium Test Engineer"
 LOCATION = "Pune, Maharashtra, India"
+
+# Default Target Phone Numbers (comma-separated)
+# Every number must send 'join century-nails' to +1 415 523 8886 once from WhatsApp
+DEFAULT_TARGET_PHONES = os.getenv("TARGET_PHONES", os.getenv("TARGET_PHONE", "918999771788, 919021753459"))
 
 # Twilio Credentials (loaded securely from environment variables)
 DEFAULT_TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 DEFAULT_TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 DEFAULT_TWILIO_FROM = os.getenv("TWILIO_FROM", "whatsapp:+14155238886")
-DEFAULT_TWILIO_TO = os.getenv("TWILIO_TO", f"whatsapp:+{TARGET_PHONE}")
 
 def fetch_daily_jobs(limit=10, hours_old=48):
     print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Searching job boards for '{SEARCH_TERM}' in {LOCATION}...")
@@ -68,35 +69,44 @@ def format_whatsapp_message(jobs_df):
     msg_lines.append("💡 *Tip:* Highlight your Provilac Selenium POM framework & Postman API testing before applying!")
     return "\n".join(msg_lines)
 
-def send_whatsapp_twilio(message_text, account_sid, auth_token, from_num=None, to_num=None):
+def send_whatsapp_twilio(message_text, account_sid, auth_token, from_num=None, to_nums=None):
     from twilio.rest import Client
     
     from_whatsapp = from_num or os.getenv("TWILIO_FROM", DEFAULT_TWILIO_FROM)
-    to_whatsapp = to_num or os.getenv("TWILIO_TO", DEFAULT_TWILIO_TO)
-    
     if not from_whatsapp.startswith("whatsapp:"):
         from_whatsapp = f"whatsapp:{from_whatsapp}"
-    if not to_whatsapp.startswith("whatsapp:"):
-        to_whatsapp = f"whatsapp:{to_whatsapp}"
         
-    print(f"Dispatching WhatsApp alert from {from_whatsapp} to {to_whatsapp} via Twilio...")
-    try:
-        client = Client(account_sid, auth_token)
-        msg = client.messages.create(
-            body=message_text,
-            from_=from_whatsapp,
-            to=to_whatsapp
-        )
-        print(f"✅ Twilio WhatsApp message delivered successfully! (SID: {msg.sid}, Status: {msg.status})")
-        return True
-    except Exception as e:
-        print(f"❌ Failed to dispatch Twilio WhatsApp message: {e}")
+    raw_targets = to_nums or os.getenv("TARGET_PHONES") or os.getenv("TARGET_PHONE") or DEFAULT_TARGET_PHONES or ""
+    phone_list = [p.strip().replace("+", "") for p in raw_targets.split(",") if p.strip().replace("+", "")]
+    
+    if not phone_list:
+        print("❌ No recipient phone numbers specified.")
         return False
+        
+    client = Client(account_sid, auth_token)
+    success_count = 0
+    
+    for phone in phone_list:
+        to_whatsapp = f"whatsapp:+{phone}" if not phone.startswith("whatsapp:") else phone
+        print(f"Dispatching WhatsApp alert from {from_whatsapp} to {to_whatsapp} via Twilio...")
+        try:
+            msg = client.messages.create(
+                body=message_text,
+                from_=from_whatsapp,
+                to=to_whatsapp
+            )
+            print(f"✅ Delivered to {to_whatsapp} (SID: {msg.sid}, Status: {msg.status})")
+            success_count += 1
+        except Exception as e:
+            print(f"❌ Failed to dispatch to {to_whatsapp}: {e}")
+            if "63015" in str(e):
+                print(f"ℹ️ Note: {to_whatsapp} must send 'join century-nails' to +1 415 523 8886 on WhatsApp first to receive messages.")
+                
+    return success_count > 0
 
-def run_job_hunt(twilio_sid=None, twilio_token=None, target_phone=None, save_excel=True):
+def run_job_hunt(twilio_sid=None, twilio_token=None, target_phones=None, save_excel=True):
     sid = twilio_sid or os.getenv("TWILIO_ACCOUNT_SID", DEFAULT_TWILIO_SID)
     token = twilio_token or os.getenv("TWILIO_AUTH_TOKEN", DEFAULT_TWILIO_TOKEN)
-    to_num = f"whatsapp:+{target_phone}" if target_phone else None
     
     # Fetch jobs
     jobs = fetch_daily_jobs(limit=15, hours_old=72)
@@ -114,20 +124,20 @@ def run_job_hunt(twilio_sid=None, twilio_token=None, target_phone=None, save_exc
     print("------------------------------------\n")
     
     if sid and token:
-        send_whatsapp_twilio(msg, sid, token, to_num=to_num)
+        send_whatsapp_twilio(msg, sid, token, to_nums=target_phones)
     else:
-        print("ℹ️ Twilio credentials not provided. Set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN in environment or GitHub Secrets.")
+        print("ℹ️ Twilio credentials not provided. Set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN.")
 
 if __name__ == "__main__":
     sid = None
     token = None
-    target = None
+    targets = None
     for i, arg in enumerate(sys.argv):
         if arg == "--sid" and i + 1 < len(sys.argv):
             sid = sys.argv[i + 1]
         elif arg == "--token" and i + 1 < len(sys.argv):
             token = sys.argv[i + 1]
-        elif arg == "--phone" and i + 1 < len(sys.argv):
-            target = sys.argv[i + 1]
+        elif (arg == "--phone" or arg == "--phones") and i + 1 < len(sys.argv):
+            targets = sys.argv[i + 1]
             
-    run_job_hunt(twilio_sid=sid, twilio_token=token, target_phone=target)
+    run_job_hunt(twilio_sid=sid, twilio_token=token, target_phones=targets)

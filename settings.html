@@ -125,14 +125,11 @@
             <p class="mt-1.5 text-xs text-slate-500">City or region filter (e.g. Pune / Remote).</p>
           </div>
 
-          <!-- WhatsApp Number -->
+          <!-- WhatsApp Number(s) -->
           <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1.5">Recipient WhatsApp Number</label>
-            <div class="relative">
-              <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 text-sm font-medium">+</span>
-              <input type="text" id="phoneInput" value="918999771788" class="w-full pl-7 pr-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition font-mono">
-            </div>
-            <p class="mt-1.5 text-xs text-slate-500">Country code + 10-digit number (e.g., 918999771788).</p>
+            <label class="block text-sm font-medium text-slate-700 mb-1.5">Recipient WhatsApp Number(s)</label>
+            <input type="text" id="phoneInput" value="918999771788, 919021753459" placeholder="918999771788, 919021753459" class="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition font-mono">
+            <p class="mt-1.5 text-xs text-slate-500">Add multiple numbers separated by a comma. (Each number must send <code>join century-nails</code> to +1 415 523 8886 once).</p>
           </div>
 
           <!-- GitHub Token -->
@@ -267,10 +264,11 @@
       const saveBtnText = document.getElementById('saveBtnText');
       saveBtn.disabled = true;
       saveBtnText.textContent = "Updating Cloud Schedule...";
-      showToast("Updating schedule in GitHub Actions...", "loading");
+      showToast("Updating schedule and recipient numbers in GitHub Actions...", "loading");
 
       try {
         const cron = calculateCron();
+        const phones = document.getElementById('phoneInput').value.trim() || '918999771788';
         
         // 1. Fetch current workflow file from GitHub
         const getUrl = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${WORKFLOW_FILE}`;
@@ -283,15 +281,25 @@
         
         if (!getRes.ok) throw new Error("Could not fetch workflow file from GitHub");
         const fileData = await getRes.json();
-        const currentContent = atob(fileData.content);
+        let updatedContent = atob(fileData.content);
 
         // 2. Replace cron line
-        const updatedContent = currentContent.replace(
+        updatedContent = updatedContent.replace(
           /- cron: '.*'/,
           `- cron: '${cron}'`
         );
 
-        // 3. Commit updated workflow file back to GitHub
+        // 3. Replace or inject TARGET_PHONES
+        if (updatedContent.includes("TARGET_PHONES:")) {
+          updatedContent = updatedContent.replace(/TARGET_PHONES: .*/, `TARGET_PHONES: '${phones}'`);
+        } else {
+          updatedContent = updatedContent.replace(
+            /TWILIO_AUTH_TOKEN: .*/,
+            `TWILIO_AUTH_TOKEN: \${{ secrets.TWILIO_AUTH_TOKEN }}\n          TARGET_PHONES: '${phones}'`
+          );
+        }
+
+        // 4. Commit updated workflow file back to GitHub
         const putRes = await fetch(getUrl, {
           method: "PUT",
           headers: {
@@ -300,7 +308,7 @@
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            message: `chore: update schedule cron to '${cron}' via Settings Dashboard`,
+            message: `chore: update schedule to '${cron}' and recipients to '${phones}' via Settings Dashboard`,
             content: btoa(updatedContent),
             sha: fileData.sha,
             branch: "main"
@@ -309,7 +317,7 @@
 
         if (!putRes.ok) throw new Error("Failed to commit schedule update to GitHub");
 
-        showToast(`Schedule successfully updated to ${scheduleReadable.textContent}!`, "success");
+        showToast(`Settings saved! Alerts will be sent to: ${phones}`, "success");
         fetchRecentRuns();
       } catch (err) {
         console.error(err);
