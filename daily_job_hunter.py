@@ -1,7 +1,9 @@
 """
 Daily Job Hunter & WhatsApp Notification Automation for Rohan Tingare
 Searches for QA Automation / Selenium roles in Pune and sends a curated digest to WhatsApp via Twilio.
-Supports multiple recipient WhatsApp numbers simultaneously!
+Features:
+- Auto-Subscriber Discovery: Automatically finds and messages EVERYONE who sends 'join century-nails' to the bot!
+- No need to manually add phone numbers in settings!
 """
 
 import os
@@ -14,10 +16,6 @@ from jobspy import scrape_jobs
 CANDIDATE_NAME = "Rohan Tingare"
 SEARCH_TERM = "QA Automation Engineer OR Selenium Test Engineer"
 LOCATION = "Pune, Maharashtra, India"
-
-# Default Target Phone Numbers (comma-separated)
-# Every number must send 'join century-nails' to +1 415 523 8886 once from WhatsApp
-DEFAULT_TARGET_PHONES = os.getenv("TARGET_PHONES", os.getenv("TARGET_PHONE", "918999771788, 919021753459"))
 
 # Twilio Credentials (loaded securely from environment variables)
 DEFAULT_TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
@@ -69,6 +67,47 @@ def format_whatsapp_message(jobs_df):
     msg_lines.append("💡 *Tip:* Highlight your Provilac Selenium POM framework & Postman API testing before applying!")
     return "\n".join(msg_lines)
 
+def get_active_subscribers(client, manual_targets=None):
+    """
+    Auto-discovers all WhatsApp numbers that sent 'join century-nails' to the bot!
+    Also merges any manual targets if provided.
+    """
+    subscribers = set()
+    
+    # 1. Auto-discover all incoming joined numbers from Twilio
+    try:
+        inbound_msgs = client.messages.list(to=DEFAULT_TWILIO_FROM, limit=50)
+        unsubscribed = set()
+        
+        for msg in inbound_msgs:
+            body = (msg.body or "").strip().lower()
+            sender = msg.from_
+            if "stop" in body or "unsubscribe" in body:
+                unsubscribed.add(sender)
+            elif "join" in body or "century-nails" in body:
+                subscribers.add(sender)
+                
+        # Exclude anyone who opted out
+        subscribers = subscribers - unsubscribed
+        print(f"Auto-discovered {len(subscribers)} active joined subscribers: {list(subscribers)}")
+    except Exception as e:
+        print(f"Warning: Could not auto-discover inbound subscribers: {e}")
+        
+    # 2. Merge manual targets (if any)
+    if manual_targets:
+        for p in manual_targets.split(","):
+            clean_p = p.strip()
+            if clean_p:
+                if not clean_p.startswith("whatsapp:"):
+                    clean_p = f"whatsapp:+{clean_p.replace('+', '')}"
+                subscribers.add(clean_p)
+                
+    # Fallback to verified number if list is somehow empty
+    if not subscribers:
+        subscribers.add("whatsapp:+918999771788")
+        
+    return list(subscribers)
+
 def send_whatsapp_twilio(message_text, account_sid, auth_token, from_num=None, to_nums=None):
     from twilio.rest import Client
     
@@ -76,18 +115,17 @@ def send_whatsapp_twilio(message_text, account_sid, auth_token, from_num=None, t
     if not from_whatsapp.startswith("whatsapp:"):
         from_whatsapp = f"whatsapp:{from_whatsapp}"
         
-    raw_targets = to_nums or os.getenv("TARGET_PHONES") or os.getenv("TARGET_PHONE") or DEFAULT_TARGET_PHONES or ""
-    phone_list = [p.strip().replace("+", "") for p in raw_targets.split(",") if p.strip().replace("+", "")]
+    client = Client(account_sid, auth_token)
+    
+    # Auto-discover subscribers!
+    phone_list = get_active_subscribers(client, manual_targets=to_nums)
     
     if not phone_list:
-        print("❌ No recipient phone numbers specified.")
+        print("❌ No recipient phone numbers found.")
         return False
         
-    client = Client(account_sid, auth_token)
     success_count = 0
-    
-    for phone in phone_list:
-        to_whatsapp = f"whatsapp:+{phone}" if not phone.startswith("whatsapp:") else phone
+    for to_whatsapp in phone_list:
         print(f"Dispatching WhatsApp alert from {from_whatsapp} to {to_whatsapp} via Twilio...")
         try:
             msg = client.messages.create(
@@ -100,7 +138,7 @@ def send_whatsapp_twilio(message_text, account_sid, auth_token, from_num=None, t
         except Exception as e:
             print(f"❌ Failed to dispatch to {to_whatsapp}: {e}")
             if "63015" in str(e):
-                print(f"ℹ️ Note: {to_whatsapp} must send 'join century-nails' to +1 415 523 8886 on WhatsApp first to receive messages.")
+                print(f"ℹ️ Note: {to_whatsapp} needs to send 'join century-nails' to +1 415 523 8886 on WhatsApp.")
                 
     return success_count > 0
 
